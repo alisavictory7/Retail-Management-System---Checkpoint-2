@@ -1,0 +1,20 @@
+# requirements.txt
+# Flask framework
+Flask==3.0.0
+
+# SQLAlchemy ORM for PostgreSQL
+SQLAlchemy==2.0.23
+psycopg2-binary==2.9.9
+
+# For loading environment variables from .env file
+python-dotenv==1.0.0
+
+# For password hashing
+Werkzeug==3.0.1
+
+# Testing framework
+pytest==8.0.0
+
+# For making HTTP requests in tests
+requests==2.31.0
+
