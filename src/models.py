@@ -9,11 +9,8 @@ class User(Base):
     username = Column(String(255), unique=True, nullable=False)
     passwordHash = Column(String(255), nullable=False)
     email = Column(String(255), unique=True, nullable=False)
+    created_at = Column(DateTime)
     sales = relationship("Sale", back_populates="user")
-
-class Admin(User):
-    __tablename__ = 'Admin'
-    adminID = Column(Integer, ForeignKey('User.userID'), primary_key=True)
 
 class Product(Base):
     __tablename__ = 'Product'
@@ -39,9 +36,7 @@ class SaleItem(Base):
     saleID = Column(Integer, ForeignKey('Sale.saleID'))
     productID = Column(Integer, ForeignKey('Product.productID'))
     quantity = Column(Integer, nullable=False)
-    # --- CHANGE HIGHLIGHT: Standardized to snake_case ---
     unit_price = Column(Numeric(10, 2), nullable=False)
-    # --- END CHANGE ---
     subtotal = Column(Numeric(10, 2), nullable=False)
     sale = relationship("Sale", back_populates="items")
     product = relationship("Product")
@@ -50,10 +45,8 @@ class Payment(Base):
     __tablename__ = 'Payment'
     paymentID = Column(Integer, primary_key=True, autoincrement=True)
     saleID = Column(Integer, ForeignKey('Sale.saleID'))
-    # --- CHANGE HIGHLIGHT: Standardized to snake_case ---
     payment_date = Column(DateTime, nullable=False)
     payment_method = Column(String(50), nullable=False)
-    # --- END CHANGE ---
     amount = Column(Numeric(10, 2), nullable=False)
     status = Column(String(50), nullable=False)
     sale = relationship("Sale", back_populates="payment")
