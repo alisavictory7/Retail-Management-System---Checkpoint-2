@@ -1,0 +1,237 @@
+@startuml Retail Management System - Class Diagram
+
+!theme plain
+skinparam classAttributeIconSize 0
+skinparam classFontSize 10
+skinparam classFontStyle bold
+skinparam packageFontSize 12
+skinparam packageFontStyle bold
+
+package "Database Layer" {
+    class Base {
+        <<abstract>>
+        +__tablename__: String
+    }
+}
+
+package "Models" {
+    class User {
+        +userID: Integer {PK}
+        +username: String {unique}
+        -_passwordHash: String
+        +email: String {unique}
+        -_created_at: DateTime
+        --
+        +passwordHash: String {property}
+        +passwordHash(value): void {setter}
+        +created_at: DateTime {property}
+        --
+        +sales: List<Sale> {relationship}
+    }
+
+    class Product {
+        +productID: Integer {PK}
+        +name: String
+        +description: String
+        +price: Numeric(10,2)
+        +stock: Integer
+        -_shipping_weight: Numeric(10,2)
+        -_discount_percent: Numeric(5,2)
+        -_country_of_origin: String
+        -_requires_shipping: Boolean
+        --
+        +shipping_weight: Numeric {property}
+        +discount_percent: Numeric {property}
+        +country_of_origin: String {property}
+        +requires_shipping: Boolean {property}
+        --
+        +get_discounted_unit_price(): float
+        +get_shipping_fees(quantity: int): float
+        +get_import_duty(quantity: int): float
+        +get_subtotal_for_quantity(quantity: int): float
+    }
+
+    class Sale {
+        +saleID: Integer {PK}
+        +userID: Integer {FK}
+        -_sale_date: DateTime
+        -_totalAmount: Numeric(10,2)
+        -_status: String
+        --
+        +sale_date: DateTime {property}
+        +sale_date(value): void {setter}
+        +totalAmount: Numeric {property}
+        +totalAmount(value): void {setter}
+        +status: String {property}
+        +status(value): void {setter}
+        --
+        +user: User {relationship}
+        +items: List<SaleItem> {relationship}
+        +payments: List<Payment> {relationship}
+    }
+
+    class SaleItem {
+        +saleItemID: Integer {PK}
+        +saleID: Integer {FK}
+        +productID: Integer {FK}
+        +quantity: Integer
+        -_original_unit_price: Numeric(10,2)
+        -_final_unit_price: Numeric(10,2)
+        -_discount_applied: Numeric(10,2)
+        -_shipping_fee_applied: Numeric(10,2)
+        -_import_duty_applied: Numeric(10,2)
+        -_subtotal: Numeric(10,2)
+        --
+        +original_unit_price: Numeric {property}
+        +original_unit_price(value): void {setter}
+        +final_unit_price: Numeric {property}
+        +final_unit_price(value): void {setter}
+        +discount_applied: Numeric {property}
+        +discount_applied(value): void {setter}
+        +shipping_fee_applied: Numeric {property}
+        +shipping_fee_applied(value): void {setter}
+        +import_duty_applied: Numeric {property}
+        +import_duty_applied(value): void {setter}
+        +subtotal: Numeric {property}
+        +subtotal(value): void {setter}
+        --
+        +sale: Sale {relationship}
+        +product: Product {relationship}
+    }
+
+    class Payment {
+        <<abstract>>
+        +paymentID: Integer {PK}
+        +saleID: Integer {FK}
+        -_payment_date: DateTime
+        +amount: Numeric(10,2)
+        -_status: String
+        -_payment_type: String
+        +type: String
+        --
+        +payment_date: DateTime {property}
+        +payment_date(value): void {setter}
+        +status: String {property}
+        +status(value): void {setter}
+        +payment_type: String {property}
+        +payment_type(value): void {setter}
+        --
+        +authorized(): (bool, str)
+        +sale: Sale {relationship}
+    }
+
+    class Cash {
+        -_cash_tendered: Numeric(10,2)
+        --
+        +cash_tendered: Numeric {property}
+        +cash_tendered(value): void {setter}
+    }
+
+    class Card {
+        -_card_number: String
+        -_card_type: String
+        -_card_exp_date: String
+        --
+        +card_number: String {property}
+        +card_number(value): void {setter}
+        +card_type: String {property}
+        +card_type(value): void {setter}
+        +card_exp_date: String {property}
+        +card_exp_date(value): void {setter}
+        --
+        +authorized(): (bool, str)
+    }
+
+    class FailedPaymentLog {
+        +logID: Integer {PK}
+        +userID: Integer {FK}
+        -_attempt_date: DateTime
+        +amount: Numeric(10,2)
+        -_payment_method: String
+        -_reason: String
+        --
+        +attempt_date: DateTime {property}
+        +attempt_date(value): void {setter}
+        +payment_method: String {property}
+        +payment_method(value): void {setter}
+        +reason: String {property}
+        +reason(value): void {setter}
+    }
+}
+
+package "Application Layer" {
+    class FlaskApp {
+        +app: Flask
+        +config: dict
+        --
+        +teardown_db(exception): void
+    }
+
+    class CartManager {
+        <<utility>>
+        --
+        +get_or_create_cart_sale(user_id, db): Sale
+        +get_cart_items(user_id, db): dict
+        +add_item_to_cart(user_id, product_id, quantity, db): (bool, str)
+        +update_cart_item_quantity(user_id, product_id, quantity, db): (bool, str)
+        +clear_cart(user_id, db): (bool, str)
+        +_recalculate_cart_totals(cart, db): dict
+        +recalculate_cart_totals(cart, db): dict
+        +_refresh_cart_after_payment_failure(cart, db): dict
+    }
+
+    class RouteHandler {
+        <<controller>>
+        --
+        +index(): Response
+        +register(): Response
+        +login(): Response
+        +logout(): Response
+        +add_to_cart(): Response
+        +set_cart_quantity(): Response
+        +checkout(): Response
+        +cancel_sale(): Response
+    }
+}
+
+package "Database Connection" {
+    class DatabaseManager {
+        <<singleton>>
+        +engine: Engine
+        +SessionLocal: sessionmaker
+        +DATABASE_URL: String
+        --
+        +get_db(): Session
+        +close_db(e): void
+    }
+}
+
+' Relationships
+User ||--o{ Sale : "has many"
+User ||--o{ FailedPaymentLog : "has many"
+Sale ||--o{ SaleItem : "contains"
+Sale ||--o{ Payment : "has many"
+Product ||--o{ SaleItem : "included in"
+Payment <|-- Cash : "inherits"
+Payment <|-- Card : "inherits"
+Base <|-- User : "inherits"
+Base <|-- Product : "inherits"
+Base <|-- Sale : "inherits"
+Base <|-- SaleItem : "inherits"
+Base <|-- Payment : "inherits"
+Base <|-- FailedPaymentLog : "inherits"
+
+' Application relationships
+FlaskApp --> DatabaseManager : "uses"
+RouteHandler --> CartManager : "uses"
+RouteHandler --> DatabaseManager : "uses"
+CartManager --> DatabaseManager : "uses"
+
+' Notes
+note right of Payment : "Polymorphic inheritance\nusing SQLAlchemy"
+note right of Cash : "Polymorphic identity: 'cash'"
+note right of Card : "Polymorphic identity: 'card'"
+note right of Product : "Business logic for\npricing calculations"
+note right of CartManager : "Database-backed cart\nmanagement functions"
+
+@enduml

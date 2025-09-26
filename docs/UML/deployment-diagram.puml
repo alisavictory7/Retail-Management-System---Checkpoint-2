@@ -1,0 +1,137 @@
+@startuml
+!theme plain
+skinparam componentStyle rectangle
+skinparam nodeStyle rectangle
+skinparam databaseStyle rectangle
+skinparam cloudStyle rectangle
+skinparam noteBackgroundColor #F0F8FF
+skinparam noteBorderColor #4682B4
+skinparam componentBackgroundColor #E8F4FD
+skinparam componentBorderColor #4682B4
+skinparam nodeBackgroundColor #FFE6CC
+skinparam nodeBorderColor #FF8C00
+skinparam databaseBackgroundColor #E6F3FF
+skinparam databaseBorderColor #0066CC
+
+title Retail Management System - Deployment Architecture
+
+' Define the deployment environment
+cloud "Internet" as Internet
+
+' Client-side components
+node "Client Machine" as Client {
+    artifact "Web Browser" as Browser
+    component "HTML5/CSS3/JavaScript" as Frontend
+    component "Tailwind CSS (CDN)" as Tailwind
+    component "AJAX Requests" as AJAX
+}
+
+' Server-side deployment
+node "Application Server" as Server {
+    artifact "Python Runtime Environment" as PythonEnv
+    component "Python 3.10+" as Python
+    component "Virtual Environment (venv)" as Venv
+    
+    artifact "Flask Web Application" as FlaskApp
+    component "Flask 3.0.0" as Flask
+    component "Werkzeug 3.0.1" as Werkzeug
+    component "Session Management" as Session
+    
+    artifact "Application Logic" as AppLogic
+    component "Route Handlers" as Routes
+    component "Cart Manager" as CartMgr
+    component "Payment Processor" as Payment
+    component "Business Logic" as Business
+    
+    artifact "Data Access Layer" as DataLayer
+    component "SQLAlchemy 2.0.23" as ORM
+    component "psycopg2-binary 2.9.9" as DBDriver
+    component "Connection Pool" as ConnPool
+    
+    artifact "Static Assets" as StaticAssets
+    component "CSS Files" as CSS
+    component "JavaScript Files" as JS
+    component "Templates (Jinja2)" as Templates
+    
+    artifact "Configuration" as Config
+    component ".env File" as EnvFile
+    component "python-dotenv 1.0.0" as DotEnv
+    component "Application Config" as AppConfig
+}
+
+' Database server
+node "Database Server" as DBServer {
+    artifact "PostgreSQL Database" as PostgreSQL
+    database "retail_system" as Database
+    component "User Table" as UserTable
+    component "Product Table" as ProductTable
+    component "Sale Table" as SaleTable
+    component "SaleItem Table" as SaleItemTable
+    component "Payment Table" as PaymentTable
+    component "FailedPaymentLog Table" as LogTable
+    component "PostgreSQL 12+" as PostgresEngine
+    component "Connection Manager" as DBConnMgr
+}
+
+' Testing environment
+node "Testing Environment" as TestEnv {
+    artifact "Test Framework" as TestFramework
+    component "pytest 8.0.0" as Pytest
+    component "requests 2.31.0" as Requests
+    component "Test Cases" as TestCases
+}
+
+' Connections and relationships
+Internet --> Browser : "HTTP/HTTPS"
+Browser --> FlaskApp : "REST API Calls"
+Browser --> StaticAssets : "Static Resources"
+
+FlaskApp --> AppLogic : "Business Logic"
+AppLogic --> DataLayer : "Data Operations"
+DataLayer --> PostgreSQL : "SQL Queries"
+
+TestFramework --> FlaskApp : "Test Requests"
+TestFramework --> PostgreSQL : "Test Data"
+
+' Component dependencies
+Flask --> Routes
+Routes --> CartMgr
+Routes --> Payment
+Routes --> Business
+
+ORM --> DBDriver
+DBDriver --> ConnPool
+ConnPool --> DBConnMgr
+
+Templates --> CSS
+Templates --> JS
+Templates --> Tailwind
+
+Config --> EnvFile
+Config --> DotEnv
+Config --> AppConfig
+
+' Database relationships
+UserTable ||--o{ SaleTable : "1:N"
+SaleTable ||--o{ SaleItemTable : "1:N"
+SaleTable ||--o{ PaymentTable : "1:N"
+ProductTable ||--o{ SaleItemTable : "1:N"
+UserTable ||--o{ LogTable : "1:N"
+
+' Deployment notes
+note top of Server : "Single-tier Architecture\nDevelopment Environment\nPython Virtual Environment\nFlask Development Server"
+
+note top of DBServer : "PostgreSQL Database Server\nPersistent Data Storage\nACID Transactions\nConnection Pooling"
+
+note top of Client : "Client-side Rendering\nResponsive Web Interface\nAJAX for Dynamic Updates\nSession-based Authentication"
+
+' Environment variables
+note bottom of Config : "Environment Configuration:\nDB_USERNAME=postgres\nDB_PASSWORD=***\nDB_HOST=localhost\nDB_PORT=5432\nDB_NAME=retail_system"
+
+' Security considerations
+note right of Internet : "Security Features:\n- Password Hashing (Werkzeug)\n- Session Management\n- Input Validation\n- SQL Injection Protection\n- CSRF Protection (Flask)"
+
+' Performance considerations
+note left of DataLayer : "Performance Features:\n- Connection Pooling\n- Query Optimization\n- Database Indexing\n- Transaction Management"
+
+@enduml

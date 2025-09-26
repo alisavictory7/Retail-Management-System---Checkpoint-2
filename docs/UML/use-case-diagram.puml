@@ -1,0 +1,117 @@
+@startuml
+!theme plain
+skinparam usecaseStyle rectangle
+skinparam actorStyle awesome
+skinparam packageStyle rectangle
+skinparam noteBackgroundColor #F0F8FF
+skinparam noteBorderColor #4682B4
+skinparam usecaseBackgroundColor #E8F4FD
+skinparam usecaseBorderColor #4682B4
+skinparam actorBackgroundColor #FFE6CC
+skinparam actorBorderColor #FF8C00
+
+title Retail Management System - Use Case Diagram
+
+' Define actors
+actor "End User" as User
+actor "Payment Service" as PaymentService
+actor "Database System" as Database
+
+' Define the system boundary
+rectangle "Retail Management System" {
+    
+    ' User Management Use Cases
+    package "User Management" {
+        usecase "Register Account" as UC1
+        usecase "Login to System" as UC2
+        usecase "Logout from System" as UC3
+    }
+    
+    ' Product Management Use Cases
+    package "Product Management" {
+        usecase "Browse Products" as UC4
+        usecase "View Product Details" as UC5
+    }
+    
+    ' Shopping Cart Use Cases
+    package "Shopping Cart Management" {
+        usecase "Add Item to Cart" as UC6
+        usecase "Update Cart Quantity" as UC7
+        usecase "Remove Item from Cart" as UC8
+        usecase "View Shopping Cart" as UC9
+        usecase "Clear Shopping Cart" as UC10
+    }
+    
+    ' Sales and Payment Use Cases
+    package "Sales and Payment" {
+        usecase "Register Sale" as UC11
+        usecase "Process Cash Payment" as UC12
+        usecase "Process Card Payment" as UC13
+        usecase "Validate Payment" as UC14
+        usecase "Generate Receipt" as UC15
+        usecase "Handle Payment Failure" as UC16
+    }
+    
+    ' Order Management Use Cases
+    package "Order Management" {
+        usecase "View Purchase History" as UC17
+        usecase "Cancel Sale" as UC18
+    }
+    
+    ' System Management Use Cases
+    package "System Management" {
+        usecase "Manage Inventory" as UC19
+        usecase "Calculate Pricing" as UC20
+        usecase "Log Failed Payments" as UC21
+    }
+}
+
+' Actor relationships
+User --> UC1 : "Creates account"
+User --> UC2 : "Authenticates"
+User --> UC3 : "Ends session"
+User --> UC4 : "Views catalog"
+User --> UC5 : "Examines products"
+User --> UC6 : "Adds items"
+User --> UC7 : "Modifies quantities"
+User --> UC8 : "Removes items"
+User --> UC9 : "Reviews cart"
+User --> UC10 : "Empties cart"
+User --> UC11 : "Initiates purchase"
+User --> UC12 : "Pays with cash"
+User --> UC13 : "Pays with card"
+User --> UC15 : "Receives confirmation"
+User --> UC17 : "Checks history"
+User --> UC18 : "Cancels transaction"
+
+' Supporting actor relationships
+PaymentService --> UC14 : "Validates payment"
+PaymentService --> UC16 : "Reports failure"
+Database --> UC19 : "Stores inventory"
+Database --> UC21 : "Records failures"
+
+' Use case relationships
+UC6 ..> UC9 : "includes"
+UC7 ..> UC9 : "includes"
+UC8 ..> UC9 : "includes"
+UC11 ..> UC9 : "includes"
+UC11 ..> UC14 : "includes"
+UC12 ..> UC14 : "includes"
+UC13 ..> UC14 : "includes"
+UC14 ..> UC15 : "extends"
+UC14 ..> UC16 : "extends"
+UC16 ..> UC21 : "includes"
+UC11 ..> UC20 : "includes"
+UC6 ..> UC20 : "includes"
+UC7 ..> UC20 : "includes"
+
+' Notes for key use cases
+note right of UC11 : "Primary Use Case:\nRegister Sale/Purchase\nTrigger: User chooses\n'Complete Purchase'"
+note right of UC14 : "Payment validation\nincludes card number\nand expiry checks"
+note right of UC16 : "Handles payment\ndeclines and failures\nwith logging"
+note right of UC20 : "Calculates discounts,\nshipping fees, and\nimport duties"
+
+' System boundary notes
+note bottom of "Retail Management System" : "Web-based retail system\nwith database persistence\nand payment processing"
+
+@enduml

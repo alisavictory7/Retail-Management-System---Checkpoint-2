@@ -1,18 +1,204 @@
 # src/main.py
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify
 from src.database import get_db, close_db
-from src.models import Product, User, Sale, SaleItem, Payment, FailedPaymentLog
+from src.models import Product, User, Sale, SaleItem, Payment, Cash, Card, FailedPaymentLog
 from werkzeug.security import generate_password_hash, check_password_hash
 import random
-from datetime import datetime
-from sqlalchemy import not_
+from datetime import datetime, timezone
+from sqlalchemy import not_, desc
 
-app = Flask(__name__, template_folder='../templates')
+app = Flask(__name__, template_folder='../templates', static_folder='../static')
 app.config['SECRET_KEY'] = 'a_very_secret_key'
 
 @app.teardown_appcontext
 def teardown_db(exception):
-    close_db(exception)
+    try:
+        close_db(exception)
+    except RuntimeError:
+        # Handle case where we're outside of application context during tests
+        pass
+
+# --- Database-Backed Cart Functions ---
+
+def get_or_create_cart_sale(user_id, db):
+    """Get existing cart sale or create a new one for the user."""
+    cart_sale = db.query(Sale).filter_by(userID=user_id).filter(Sale._status == 'cart').first()
+    if not cart_sale:
+        cart_sale = Sale()
+        cart_sale.userID = user_id
+        cart_sale._sale_date = datetime.now(timezone.utc)
+        cart_sale._totalAmount = 0.0
+        cart_sale._status = 'cart'
+        db.add(cart_sale)
+        db.commit()
+        db.refresh(cart_sale)
+    return cart_sale
+
+def get_cart_items(user_id, db):
+    """Get all items in the user's cart from database."""
+    cart_sale = get_or_create_cart_sale(user_id, db)
+    cart_items = []
+    grand_total = 0.0
+    
+    for sale_item in cart_sale.items:
+        product = db.query(Product).filter_by(productID=sale_item.productID).first()
+        if product:
+            # Calculate current values
+            discounted_unit_price = product.get_discounted_unit_price()
+            subtotal = product.get_subtotal_for_quantity(sale_item.quantity)
+            shipping_fee = product.get_shipping_fees(sale_item.quantity)
+            import_duty = product.get_import_duty(sale_item.quantity)
+            
+            item_total = subtotal + shipping_fee + import_duty
+            grand_total += item_total
+            
+            cart_items.append({
+                'product_id': product.productID,
+                'name': product.name,
+                'quantity': sale_item.quantity,
+                'original_price': float(product.price),
+                'discounted_unit_price': discounted_unit_price,
+                'subtotal': subtotal,
+                'discount_applied': (float(product.price) - discounted_unit_price) * sale_item.quantity,
+                'shipping_fee': shipping_fee,
+                'import_duty': import_duty,
+                'available_stock': product.stock
+            })
+    
+    return {
+        'items': cart_items,
+        'grand_total': grand_total,
+        'sale_id': cart_sale.saleID
+    }
+
+def add_item_to_cart(user_id, product_id, quantity, db):
+    """Add item to database-backed cart."""
+    try:
+        cart_sale = get_or_create_cart_sale(user_id, db)
+        
+        # Check if item already exists in cart
+        existing_item = db.query(SaleItem).filter_by(
+            saleID=cart_sale.saleID, 
+            productID=product_id
+        ).first()
+        
+        if existing_item:
+            existing_item.quantity += quantity
+        else:
+            product = db.query(Product).filter_by(productID=product_id).first()
+            if not product:
+                return False, "Product not found"
+            
+            new_item = SaleItem()
+            new_item.saleID = cart_sale.saleID
+            new_item.productID = product_id
+            new_item.quantity = quantity
+            new_item._original_unit_price = float(product.price)
+            new_item._discount_applied = 0.0
+            new_item._final_unit_price = product.get_discounted_unit_price()
+            new_item._shipping_fee_applied = 0.0
+            new_item._import_duty_applied = 0.0
+            new_item._subtotal = product.get_subtotal_for_quantity(quantity)
+            db.add(new_item)
+        
+        db.commit()
+        return True, "Item added to cart"
+    except Exception as e:
+        db.rollback()
+        return False, f"Error adding item to cart: {str(e)}"
+
+def update_cart_item_quantity(user_id, product_id, quantity, db):
+    """Update quantity of item in database-backed cart."""
+    cart_sale = get_or_create_cart_sale(user_id, db)
+    
+    if quantity <= 0:
+        # Remove item from cart
+        item = db.query(SaleItem).filter_by(
+            saleID=cart_sale.saleID, 
+            productID=product_id
+        ).first()
+        if item:
+            db.delete(item)
+    else:
+        # Update quantity
+        item = db.query(SaleItem).filter_by(
+            saleID=cart_sale.saleID, 
+            productID=product_id
+        ).first()
+        if item:
+            product = db.query(Product).filter_by(productID=product_id).first()
+            if product:
+                item.quantity = quantity
+                item.subtotal = product.get_subtotal_for_quantity(quantity)
+    
+    db.commit()
+    return True, "Cart updated"
+
+def clear_cart(user_id, db):
+    """Clear all items from user's cart."""
+    cart_sale = db.query(Sale).filter_by(userID=user_id).filter(Sale._status == 'cart').first()
+    if cart_sale:
+        # Delete all cart items
+        db.query(SaleItem).filter_by(saleID=cart_sale.saleID).delete()
+        # Delete the cart sale
+        db.delete(cart_sale)
+        db.commit()
+    return True, "Cart cleared"
+
+def _recalculate_cart_totals(cart, db):
+    """
+    Recalculates derived values for all items in the cart like subtotals and fees.
+    This should be the single source of truth for cart calculations.
+    """
+    grand_total = 0
+    for item in cart.get('items', []):
+        product = db.query(Product).filter_by(productID=item['product_id']).first()
+        if product:
+            quantity = item.get('quantity', 0)
+            # Ensure all calculated fields are re-evaluated and stored as floats
+            item['discounted_unit_price'] = product.get_discounted_unit_price()
+            item['subtotal'] = product.get_subtotal_for_quantity(quantity)
+            item['discount_applied'] = (float(product.price) - item['discounted_unit_price']) * quantity
+            item['shipping_fee'] = product.get_shipping_fees(quantity)
+            item['import_duty'] = product.get_import_duty(quantity)
+            item['available_stock'] = product.stock
+            grand_total += item['subtotal'] + item['shipping_fee'] + item['import_duty']
+    
+    cart['grand_total'] = grand_total
+    return cart
+
+def recalculate_cart_totals(cart, db):
+    # Public wrapper retained for compatibility
+    return _recalculate_cart_totals(cart, db)
+
+def _refresh_cart_after_payment_failure(cart, db):
+    """
+    After payment failure: completely refresh the cart by clearing it and re-adding
+    all items with the same quantities the user had before.
+    This simulates a page refresh and ensures the cart is exactly as the user intended.
+    """
+    # Step 1: Store the original cart items with their quantities
+    original_items = cart.get('items', []).copy()
+    
+    # Step 2: Completely clear the cart (simulate page refresh)
+    cart['items'] = []
+    cart['grand_total'] = 0.0
+    
+    # Step 3: Re-add each item exactly as the user had it before
+    for item in original_items:
+        # Re-add the item with the exact same quantity and details
+        cart['items'].append({
+            'product_id': item['product_id'],
+            'name': item['name'],
+            'quantity': item['quantity'],  # Same quantity as before
+            'original_price': item['original_price']
+        })
+    
+    # Step 4: Recalculate totals for proper display
+    cart = _recalculate_cart_totals(cart, db)
+    
+    return cart
+
 
 @app.route('/')
 def index():
@@ -20,13 +206,47 @@ def index():
         return redirect(url_for('login'))
     
     db = get_db()
+    
+    user = db.query(User).filter_by(userID=session['user_id']).first()
+    
+    if not user:
+        session.clear()
+        return redirect(url_for('login'))
+    
     products = db.query(Product).all()
-    cart = session.get('cart', {'items': [], 'total': 0.0})
-    total = sum(float(item['subtotal']) for item in cart.get('items', []))
+    
+    # Get cart from database instead of session
+    cart = get_cart_items(session['user_id'], db)
+    
+    # Note: Do not auto-adjust quantities; user decides how to resolve stock issues
+    cart_update_message = None
 
-    recent_sales = db.query(Sale).order_by(Sale.sale_date.desc()).limit(5).all()
+    # Get recent completed sales (exclude cart sales)
+    recent_sales = db.query(Sale).filter_by(userID=session['user_id']).filter(Sale._status != 'cart').order_by(desc(Sale._sale_date)).limit(5).all()
+    username = user.username
+    
+    return render_template('index.html', products=products, cart=cart, username=username, recent_sales=recent_sales, cart_update_message=cart_update_message)
 
-    return render_template('index.html', products=products, username=session.get('username'), cart=cart.get('items', []), total=total, recent_sales=recent_sales)
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    if request.method == 'POST':
+        username = request.form['username']
+        email = request.form['email']
+        password = request.form['password']
+        
+        db = get_db()
+        if db.query(User).filter_by(username=username).first():
+            return render_template('register.html', error='Username already exists.')
+        if db.query(User).filter_by(email=email).first():
+            return render_template('register.html', error='Email already registered.')
+
+        hashed_password = generate_password_hash(password)
+        new_user = User(username=username, email=email, passwordHash=hashed_password)
+        db.add(new_user)
+        db.commit()
+        return redirect(url_for('login'))
+        
+    return render_template('register.html')
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -35,36 +255,14 @@ def login():
         password = request.form['password']
         db = get_db()
         user = db.query(User).filter_by(username=username).first()
-
-        if not user:
-            return render_template('login.html', error="Username does not exist.")
-        elif not check_password_hash(user.passwordHash, password):
-            return render_template('login.html', error="Invalid password. Please try again.")
-        else:
+        if user and check_password_hash(user.passwordHash, password):
             session['user_id'] = user.userID
-            session['username'] = user.username
+            # Preserve existing cart or initialize empty cart if none exists
+            if 'cart' not in session:
+                session['cart'] = {'items': [], 'grand_total': 0.0}
             return redirect(url_for('index'))
-            
+        return render_template('login.html', error='Invalid username or password.')
     return render_template('login.html')
-
-@app.route('/register', methods=['GET', 'POST'])
-def register():
-    if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
-        email = request.form['email']
-        db = get_db()
-
-        user_exists = db.query(User).filter_by(username=username).first()
-        if user_exists:
-            return render_template('register.html', error="An account with this username already exists.")
-
-        hashed_password = generate_password_hash(password, method='pbkdf2:sha256')
-        new_user = User(username=username, passwordHash=hashed_password, email=email)
-        db.add(new_user)
-        db.commit()
-        return redirect(url_for('login'))
-    return render_template('register.html')
 
 @app.route('/logout')
 def logout():
@@ -73,216 +271,341 @@ def logout():
 
 @app.route('/add_to_cart', methods=['POST'])
 def add_to_cart():
-    if 'user_id' not in session:
-        return jsonify({'error': 'Unauthorized'}), 401
-
-    try:
-        db = get_db()
-        
-        product_id_str = request.form.get('product_id')
-        quantity_to_add_str = request.form.get('quantity')
-
-        if not product_id_str or not quantity_to_add_str:
-            return jsonify({'error': 'Product ID and quantity are required.'}), 400
-        
-        product_id = int(float(product_id_str))
-        quantity_to_add = int(float(quantity_to_add_str))
-
-        product = db.query(Product).filter_by(productID=product_id).first()
-        if not product:
-            return jsonify({'error': 'Product not found.'}), 404
-
-        cart = session.get('cart', {'items': [], 'total': 0.0})
-        item_in_cart = next((item for item in cart['items'] if item['product_id'] == product_id), None)
-
-        current_quantity_in_cart = int(item_in_cart['quantity']) if item_in_cart else 0
-        total_quantity_required = current_quantity_in_cart + quantity_to_add
-
-        if product.stock < total_quantity_required:
-            error_message = f"Insufficient stock for {product.name}. Only {product.stock} in stock."
-            return jsonify({
-                'error': error_message,
-                'type': 'INSUFFICIENT_STOCK',
-                'available_stock': product.stock,
-                'product_id': product_id
-            }), 400
-
-        if item_in_cart:
-            item_in_cart['quantity'] = int(item_in_cart['quantity']) + quantity_to_add
-            item_in_cart['subtotal'] = item_in_cart['quantity'] * float(product.price)
-        else:
-            cart['items'].append({
-                'product_id': product.productID,
-                'name': product.name,
-                'quantity': quantity_to_add,
-                'price': float(product.price),
-                'subtotal': quantity_to_add * float(product.price)
-            })
-
-        cart['total'] = sum(float(item['subtotal']) for item in cart['items'])
-        session['cart'] = cart
-        session.modified = True
-
-        return jsonify({'success': True, 'cart': cart})
+    if 'user_id' not in session: return jsonify({'error': 'User not logged in.'}), 401
     
-    except (ValueError, TypeError):
-        return jsonify({'error': 'Invalid product ID or quantity format.'}), 400
-    except Exception as e:
-        print(f"An error occurred in add_to_cart: {e}")
-        return jsonify({'error': 'A server error occurred. Please try again later.'}), 500
-
-@app.route('/clear_cart', methods=['POST'])
-def clear_cart():
-    session['cart'] = {'items': [], 'total': 0.0}
-    session.modified = True
-    return jsonify({'success': True, 'cart': session['cart']})
-
-@app.route('/purchase', methods=['POST'])
-def purchase():
-    if 'user_id' not in session:
-        return jsonify({'error': 'Unauthorized'}), 401
-
-    cart = session.get('cart', {'items': [], 'total': 0.0})
-    if not cart['items']:
-        return jsonify({'error': 'Your cart is empty.'}), 400
-    
-    payment_method = request.form.get('payment_method')
     db = get_db()
     
-    # More detailed payment simulation
-    payment_successful = True
-    reason = ""
-
-    if random.random() < 0.3:
-        payment_successful = False
-        if payment_method == 'Card':
-            if random.random() < 0.5:
-                reason = "Card Declined by issuer"
-            else:
-                reason = "Payment processor communication error"
-        else:
-            reason = "Cash handling error at terminal"
-
-    if not payment_successful:
-        log_entry = FailedPaymentLog(
-            userID=session['user_id'],
-            attempt_date=datetime.utcnow(),
-            amount=float(cart['total']),
-            payment_method=payment_method,
-            reason=reason
-        )
-        db.add(log_entry)
-        db.commit()
-
-        error_message = (
-            f"Payment Failure: {reason}. No sale persisted and no stock change. "
-            f"Your attempt has been logged with reference ID {log_entry.logID}. Please try another payment method."
-        )
-        return jsonify({'error': error_message}), 400
-    
     try:
-        # --- CHANGE HIGHLIGHT: Random concurrency simulation has been removed ---
+        if 'product_id' not in request.form or not request.form['product_id']:
+            return jsonify({'error': 'Product ID is required.'}), 400
+        product_id = int(request.form['product_id'])
+        quantity = int(request.form.get('quantity', 1))
+    except (ValueError, TypeError, KeyError):
+        return jsonify({'error': 'Invalid or missing product data.'}), 400
 
-        # Final stock check before committing the actual user's sale
-        for item in cart['items']:
-            product = db.query(Product).filter_by(productID=item['product_id']).first()
-            if product.stock < int(item['quantity']):
-                error_message = (
-                    f"Could not complete purchase. Stock for {product.name} changed before checkout. "
-                    f"Only {product.stock} left. Please review your cart."
-                )
-                return jsonify({'error': error_message}), 409
-
-        new_sale = Sale(
-            userID=session['user_id'],
-            sale_date=datetime.utcnow(),
-            totalAmount=float(cart['total'])
-        )
-        db.add(new_sale)
-        db.flush()
-
-        new_payment = Payment(
-            saleID=new_sale.saleID,
-            payment_date=datetime.utcnow(),
-            amount=float(cart['total']),
-            payment_method=payment_method,
-            status='Completed'
-        )
-        db.add(new_payment)
-        
-        for item in cart['items']:
-            product = db.query(Product).filter_by(productID=item['product_id']).first()
-            product.stock -= int(item['quantity'])
-            
-            sale_item = SaleItem(
-                saleID=new_sale.saleID,
-                productID=item['product_id'],
-                quantity=int(item['quantity']),
-                unit_price=float(item['price']),
-                subtotal=float(item['subtotal'])
-            )
-            db.add(sale_item)
-        
-        db.commit()
-
-        session['last_sale_id'] = new_sale.saleID
-        session['cart'] = {'items': [], 'total': 0.0}
-        session.modified = True
-        
-        return jsonify({
-            'message': 'Purchase successful!',
-            'receipt_url': url_for('receipt', sale_id=new_sale.saleID)
-        })
-
-    except Exception as e:
-        db.rollback()
-        print(f"An error occurred during purchase: {e}")
-        return jsonify({'error': f'An error occurred: {str(e)}'}), 500
-
-@app.route('/receipt/<int:sale_id>')
-def receipt(sale_id):
-    if 'user_id' not in session:
-        return redirect(url_for('login'))
-
-    db = get_db()
-    sale = db.query(Sale).filter_by(saleID=sale_id, userID=session['user_id']).first()
+    product = db.query(Product).filter_by(productID=product_id).first()
+    if not product: return jsonify({'error': 'Product not found.'}), 404
+    if product.stock < 1: return jsonify({'error': 'Product is out of stock.'}), 400
     
-    if not sale:
-        return "Receipt not found or access denied.", 404
-        
-    return render_template('receipt.html', sale=sale, username=session['username'])
-
-@app.route('/remove_from_cart', methods=['POST'])
-def remove_from_cart():
-    if 'user_id' not in session:
-        return jsonify({'error': 'Unauthorized'}), 401
-    try:
-        product_id = int(request.form.get('product_id'))
-        cart = session.get('cart', {'items': [], 'total': 0.0})
-        cart['items'] = [item for item in cart['items'] if item['product_id'] != product_id]
-        cart['total'] = sum(float(item['subtotal']) for item in cart['items'])
-        session['cart'] = cart
-        session.modified = True
-        return jsonify({'success': True, 'cart': cart})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    # Check if adding this quantity would exceed stock
+    cart_sale = get_or_create_cart_sale(session['user_id'], db)
+    existing_item = db.query(SaleItem).filter_by(
+        saleID=cart_sale.saleID, 
+        productID=product_id
+    ).first()
+    
+    current_quantity = existing_item.quantity if existing_item else 0
+    new_quantity = current_quantity + quantity
+    
+    if new_quantity > product.stock:
+        return jsonify({'error': f'Not enough stock. Only {product.stock} available.'}), 400
+    
+    # Add item to database cart
+    success, message = add_item_to_cart(session['user_id'], product_id, quantity, db)
+    if not success:
+        return jsonify({'error': message}), 400
+    
+    # Get updated cart from database
+    cart = get_cart_items(session['user_id'], db)
+    
+    return jsonify({'message': 'Item added to cart.', 'cart': cart, 'product_name': product.name})
 
 @app.route('/set_cart_quantity', methods=['POST'])
 def set_cart_quantity():
-    if 'user_id' not in session:
-        return jsonify({'error': 'Unauthorized'}), 401
+    if 'user_id' not in session: return jsonify({'error': 'User not logged in.'}), 401
+    
+    db = get_db()
     try:
-        product_id = int(request.form.get('product_id'))
-        quantity = int(request.form.get('quantity'))
-        cart = session.get('cart', {'items': [], 'total': 0.0})
-        item_in_cart = next((item for item in cart['items'] if item['product_id'] == product_id), None)
-        if item_in_cart:
-            item_in_cart['quantity'] = quantity
-            item_in_cart['subtotal'] = quantity * float(item_in_cart['price'])
-        cart['total'] = sum(float(item['subtotal']) for item in cart['items'])
-        session['cart'] = cart
-        session.modified = True
-        return jsonify({'success': True, 'cart': cart})
+        product_id = int(request.form['product_id'])
+        quantity = int(request.form.get('quantity', 0))
+    except (ValueError, TypeError, KeyError):
+        return jsonify({'error': 'Invalid or missing product data.'}), 400
+
+    product = db.query(Product).filter_by(productID=product_id).first()
+    if not product: return jsonify({'error': 'Product not found.'}), 404
+    
+    if quantity > product.stock:
+        return jsonify({
+            'error': f'Only {product.stock} in stock.',
+            'available': product.stock,
+            'product_id': product_id,
+            'product_name': product.name
+        }), 409
+
+    # Update quantity in database cart
+    success, message = update_cart_item_quantity(session['user_id'], product_id, quantity, db)
+    if not success:
+        return jsonify({'error': message}), 400
+    
+    # Get updated cart from database
+    cart = get_cart_items(session['user_id'], db)
+    
+    return jsonify({
+        'message': 'Cart updated.', 
+        'cart': cart, 
+        'quantity_adjusted': False, 
+        'new_quantity': quantity
+    })
+
+@app.route('/checkout', methods=['POST'])
+def checkout():
+    if 'user_id' not in session:
+        return "User not logged in.", 401
+
+    db = get_db()
+    
+    # Get cart from database instead of session
+    cart = get_cart_items(session['user_id'], db)
+    if not cart.get('items'):
+        # Return to index with error message instead of silent redirect
+        user = db.query(User).filter_by(userID=session['user_id']).first()
+        products = db.query(Product).all()
+        recent_sales = db.query(Sale).filter_by(userID=session['user_id']).filter(Sale._status != 'cart').order_by(desc(Sale._sale_date)).limit(5).all()
+        msg = "Cannot complete purchase: Your cart is empty. Please add items to your cart first."
+        return render_template('index.html', products=products, cart=cart, username=user.username, recent_sales=recent_sales, cart_update_message=msg), 400
+
+    try:
+        product_ids = [item['product_id'] for item in cart['items']]
+        products_in_cart = db.query(Product).filter(Product.productID.in_(product_ids)).with_for_update().all()
+        
+        product_map = {p.productID: p for p in products_in_cart}
+
+        for item in cart['items']:
+            product = product_map.get(item['product_id'])
+            if not product or product.stock < item['quantity']:
+                # Rollback and return user to cart with clear message
+                db.rollback()
+                # Get fresh cart from database
+                cart = get_cart_items(session['user_id'], db)
+                user = db.query(User).filter_by(userID=session['user_id']).first()
+                products = db.query(Product).all()
+                recent_sales = db.query(Sale).filter_by(userID=session['user_id']).filter(Sale._status != 'cart').order_by(desc(Sale._sale_date)).limit(5).all()
+                msg = f"Checkout failed: stock for '{item['name']}' changed: Only {product.stock if product else 0} left. All stock levels updated and payment rolled back."
+                return render_template('index.html', products=products, cart=cart, username=user.username, recent_sales=recent_sales, cart_update_message=msg), 409
+
+        payment_method = request.form['payment_method']
+        total_amount = cart['grand_total']
+
+        # Convert the existing cart sale to a pending sale
+        cart_sale = db.query(Sale).filter_by(userID=session['user_id']).filter(Sale._status == 'cart').first()
+        if cart_sale:
+            # Update the existing cart sale to pending status
+            cart_sale._status = 'pending'
+            cart_sale._totalAmount = total_amount
+            cart_sale._sale_date = datetime.now(timezone.utc)
+            new_sale = cart_sale
+        else:
+            # Create new sale if no cart exists (shouldn't happen)
+            new_sale = Sale()
+            new_sale.userID = session['user_id']
+            new_sale._sale_date = datetime.now(timezone.utc)
+            new_sale._totalAmount = total_amount
+            new_sale._status = 'pending'
+            db.add(new_sale)
+        db.flush()
+
+        payment = None
+        if payment_method == 'Cash':
+            payment = Cash(saleID=new_sale.saleID, amount=total_amount, status='pending', cash_tendered=total_amount)
+            payment.payment_type = 'cash'
+        elif payment_method == 'Card':
+            card_number = request.form.get('card_number', '').replace(' ', '').replace('-', '')
+            card_exp_date = request.form.get('card_exp_date')
+            # Basic server-side validation to avoid blank error pages
+            def _render_validation_error(msg: str):
+                # Convert the pending sale back to cart status to preserve items
+                if new_sale:
+                    new_sale._status = 'cart'
+                    db.commit()
+                
+                # Get fresh cart from database
+                cart_local = get_cart_items(session['user_id'], db)
+                user_local = db.query(User).filter_by(userID=session['user_id']).first()
+                products_local = db.query(Product).all()
+                recent_local = db.query(Sale).filter_by(userID=session['user_id']).filter(Sale._status != 'cart').order_by(desc(Sale._sale_date)).limit(5).all()
+                return render_template('index.html', products=products_local, cart=cart_local, username=user_local.username, recent_sales=recent_local, cart_update_message=msg), 400
+
+            if not card_number or not card_exp_date:
+                db.rollback()
+                return _render_validation_error('Card number and expiry date are required.')
+            if not card_number.isdigit() or not (15 <= len(card_number) <= 19):
+                db.rollback()
+                return _render_validation_error('Invalid Card Number (must be 15-19 digits)')
+            try:
+                exp_month, exp_year = map(int, card_exp_date.split('/'))
+                now = datetime.now(timezone.utc)
+                if exp_month < 1 or exp_month > 12:
+                    raise ValueError
+                if (exp_year < now.year) or (exp_year == now.year and exp_month < now.month):
+                    db.rollback()
+                    return _render_validation_error('Card Expired')
+            except Exception:
+                db.rollback()
+                return _render_validation_error('Invalid Expiry Date Format')
+            payment = Card(
+                saleID=new_sale.saleID, amount=total_amount, status='pending',
+                card_number=card_number,
+                card_type=request.form.get('card_type', 'Unknown'), 
+                card_exp_date=card_exp_date
+            )
+            payment.payment_type = 'card'
+        
+        if payment: db.add(payment)
+        
+        is_authorized, reason = payment.authorized() if payment else (False, "Invalid payment method")
+        # Simulate external payment processor behavior: 50% chance of decline for valid payments
+        if is_authorized:
+            if payment_method == 'Card' and random.random() < 0.5:
+                is_authorized = False
+                reason = 'Payment declined by processor'
+            elif payment_method == 'Cash' and random.random() < 0.5:
+                is_authorized = False
+                reason = 'Cash handling error at terminal'
+        
+        if is_authorized:
+            # Final check immediately before applying stock updates (guard against concurrent changes)
+            conflict_item = None
+            for item in cart['items']:
+                product = product_map[item['product_id']]
+                if product.stock < item['quantity']:
+                    conflict_item = (product, item)
+                    break
+
+            if conflict_item is not None:
+                # Roll back payment and sale, inform the user, and show cart for resolution
+                db.rollback()
+                # Convert the sale back to cart status
+                cart_sale = db.query(Sale).filter_by(saleID=new_sale.saleID).first()
+                if cart_sale:
+                    cart_sale._status = 'cart'
+                    db.commit()
+                
+                # Get fresh cart from database
+                cart = get_cart_items(session['user_id'], db)
+                user = db.query(User).filter_by(userID=session['user_id']).first()
+                products = db.query(Product).all()
+                recent_sales = db.query(Sale).filter_by(userID=session['user_id']).filter(Sale._status != 'cart').order_by(desc(Sale._sale_date)).limit(5).all()
+                product, item = conflict_item
+                msg = f"Checkout failed: stock for '{product.name}' changed: Only {product.stock} left. All stock levels updated and payment rolled back."
+                return render_template('index.html', products=products, cart=cart, username=user.username, recent_sales=recent_sales, cart_update_message=msg), 409
+            new_sale._status = 'completed'
+            payment._status = 'completed'
+            
+            # Clear the original cart items before creating new sale items
+            # This prevents duplicate items from appearing in future carts
+            original_cart_items = db.query(SaleItem).filter_by(saleID=new_sale.saleID).all()
+            for old_item in original_cart_items:
+                db.delete(old_item)
+            
+            for item in cart['items']:
+                product = product_map[item['product_id']]
+                quantity = item['quantity']
+
+                final_unit_price = product.get_discounted_unit_price()
+                subtotal = product.get_subtotal_for_quantity(quantity)
+                discount_applied = (float(product.price) - final_unit_price) * quantity
+                shipping_fee_applied = product.get_shipping_fees(quantity)
+                import_duty_applied = product.get_import_duty(quantity)
+                
+                product.stock -= quantity
+
+                sale_item = SaleItem()
+                sale_item.saleID = new_sale.saleID
+                sale_item.productID = product.productID
+                sale_item.quantity = quantity
+                sale_item._original_unit_price = float(product.price)
+                sale_item._final_unit_price = final_unit_price
+                sale_item._discount_applied = discount_applied
+                sale_item._shipping_fee_applied = shipping_fee_applied
+                sale_item._import_duty_applied = import_duty_applied
+                sale_item._subtotal = subtotal
+                db.add(sale_item)
+
+            db.commit()
+            session['cart'] = {'items': [], 'grand_total': 0.0}
+            # Reload sale with items for receipt
+            sale_with_items = db.query(Sale).filter_by(saleID=new_sale.saleID).first()
+            for item in sale_with_items.items:
+                _ = item.product
+
+            # Compute invoice breakdown
+            items_total = sum(float(i.subtotal) for i in sale_with_items.items)
+            shipping_total = sum(float(i.shipping_fee_applied) for i in sale_with_items.items)
+            tax_total = sum(float(i.import_duty_applied) for i in sale_with_items.items)
+            discount_total = sum(float(i.discount_applied) for i in sale_with_items.items)
+            grand_total = float(sale_with_items.totalAmount)
+
+            # Payment details
+            payment_row = db.query(Payment).filter_by(saleID=sale_with_items.saleID).order_by(desc(Payment.paymentID)).first()
+            payment_method = None
+            payment_ref = None
+            masked_details = None
+            if payment_row:
+                payment_method = payment_row.payment_type or payment_row.type
+                payment_ref = f"PAY-{payment_row.paymentID}"
+                if getattr(payment_row, 'card_number', None):
+                    last4 = str(payment_row.card_number)[-4:]
+                    masked_details = f"{payment_row.card_type or 'Card'} •••• {last4}"
+
+            user = db.query(User).filter_by(userID=session['user_id']).first()
+            return render_template(
+                'receipt.html',
+                sale=sale_with_items,
+                username=user.username,
+                items_total=items_total,
+                shipping_total=shipping_total,
+                tax_total=tax_total,
+                discount_total=discount_total,
+                grand_total=grand_total,
+                payment_method=payment_method,
+                payment_ref=payment_ref,
+                masked_details=masked_details
+            )
+        else:
+            # Mark the sale as failed instead of rolling back
+            new_sale._status = 'failed'
+            payment._status = 'failed'
+            
+            # Log the failed payment attempt
+            log = FailedPaymentLog(
+                userID=session['user_id'],
+                attempt_date=datetime.now(timezone.utc),
+                amount=total_amount,
+                payment_method=payment_method,
+                reason=reason
+            )
+            db.add(log)
+            db.commit()
+            
+            # Convert the failed sale back to cart status to preserve items
+            new_sale._status = 'cart'
+            db.commit()
+            
+            # Get fresh cart from database
+            cart = get_cart_items(session['user_id'], db)
+            user = db.query(User).filter_by(userID=session['user_id']).first()
+            products = db.query(Product).all()
+            recent_sales = db.query(Sale).filter_by(userID=session['user_id']).filter(Sale._status != 'cart').order_by(desc(Sale._sale_date)).limit(5).all()
+            msg = f"Payment failed: {reason}. Failed payment attempt #{log.logID}. Please use a different payment method or cancel your sale."
+            return render_template('index.html', products=products, cart=cart, username=user.username, recent_sales=recent_sales, cart_update_message=msg), 400
+
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        db.rollback()
+        import logging
+        logging.error(f"Checkout error: {e}", exc_info=True)
+        # For debugging: show the actual error in the browser
+        return f"Checkout error: {e}", 500
+
+
+@app.route('/cancel_sale', methods=['POST'])
+def cancel_sale():
+    if 'user_id' not in session:
+        return "User not logged in.", 401
+    
+    db = get_db()
+    success, message = clear_cart(session['user_id'], db)
+    if success:
+        return redirect(url_for('index'))
+    else:
+        return f"Error clearing cart: {message}", 500
 
