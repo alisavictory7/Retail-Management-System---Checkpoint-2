@@ -1,4 +1,4 @@
-# Retail Management System - — Initial Setup & 2-Tier Architecture 
+# Retail Management System - Initial Setup & 2-Tier Architecture 
 
 **Author:** Alisa
 
