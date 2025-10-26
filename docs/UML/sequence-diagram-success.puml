@@ -1,158 +1,72 @@
-@startuml Retail Management System - Successful Purchase Flow
+@startuml System Sequence Diagram - Successful Sale Registration
 
 !theme plain
-skinparam sequenceMessageAlignment left
-skinparam sequenceArrowThickness 2
-skinparam sequenceLifeLineBackgroundColor #E8F4FD
-skinparam sequenceActorBackgroundColor #FFE6CC
-skinparam sequenceGroupBackgroundColor #F0F8FF
-skinparam sequenceGroupBorderColor #4682B4
+skinparam sequenceMessageAlign center
+skinparam sequenceArrowThickness 1
+skinparam roundcorner 10
+skinparam maxmessagesize 40
 
-title Retail Management System - Successful Purchase Flow
+' Optimized for 4096px limit
+skinparam dpi 72
+skinparam scale 0.4
+skinparam participantFontSize 8
+skinparam participantFontStyle normal
+skinparam participantBackgroundColor #E3F2FD
+skinparam participantBorderColor #1976D2
+skinparam participantBorderThickness 1
+skinparam messageFontSize 7
+skinparam messageFontStyle normal
+skinparam messageColor #333333
+skinparam noteBackgroundColor #FFF3CD
+skinparam noteBorderColor #856404
+skinparam noteBorderThickness 1
+skinparam actorBackgroundColor #FFEBEE
+skinparam actorBorderColor #D32F2F
+skinparam actorBorderThickness 1
 
-actor Customer
-participant "Web Browser" as Browser
+actor "Customer" as Customer
+participant "Browser" as Browser
 participant "Flask App" as Flask
-participant "Cart Manager" as Cart
+participant "Quality Manager" as QTM
+participant "Circuit Breaker" as CB
 participant "Database" as DB
-participant "Product" as Product
-participant "Sale" as Sale
-participant "Payment" as Payment
-participant "SaleItem" as SaleItem
 
-== User Authentication & Product Browsing ==
-Customer -> Browser: Navigate to store
-Browser -> Flask: GET /
-Flask -> DB: Query User by session
-DB --> Flask: Return User
-Flask -> DB: Query all Products
-DB --> Flask: Return Products
-Flask --> Browser: Render index.html with products
-Browser --> Customer: Display product catalog
+Customer -> Browser: Navigate to checkout
+Browser -> Flask: GET /checkout
+Flask -> QTM: get_quality_manager()
+QTM --> Flask: Manager instance
+Flask --> Browser: Render checkout page
 
-== Add Items to Cart ==
-Customer -> Browser: Enter Product ID and quantity
-Browser -> Flask: POST /add_to_cart
-note right: {product_id: 1, quantity: 2}
+Customer -> Browser: Submit payment
+Browser -> Flask: POST /process_payment
 
-Flask -> DB: Query Product by ID
-DB --> Flask: Return Product
-Flask -> Product: Check stock availability
-Product --> Flask: Stock available
+note over Flask: Security & Performance
+Flask -> QTM: authenticate_user(session)
+QTM -> DB: query User table
+DB --> QTM: user data
+QTM --> Flask: authenticated
 
-Flask -> Cart: get_or_create_cart_sale(user_id)
-Cart -> DB: Query existing cart Sale
-DB --> Cart: Return cart Sale or None
-alt Cart Sale exists
-    Cart --> Flask: Return existing cart Sale
-else Cart Sale doesn't exist
-    Cart -> DB: Create new cart Sale
-    DB --> Cart: Return new cart Sale
-    Cart --> Flask: Return new cart Sale
-end
+Flask -> QTM: throttle_request(user_id)
+QTM --> Flask: request allowed
 
-Flask -> Cart: add_item_to_cart(user_id, product_id, quantity)
-Cart -> DB: Query existing SaleItem
-alt Item already in cart
-    Cart -> DB: Update SaleItem quantity
-else New item
-    Cart -> DB: Create new SaleItem
-    note right: Store original price, calculate discounts, fees
-end
-DB --> Cart: Success
-Cart --> Flask: Success
+note over Flask: Circuit Breaker Protection
+Flask -> QTM: execute_with_circuit_breaker(payment_func)
+QTM -> CB: execute(payment_func)
+CB -> DB: query CircuitBreakerState
+DB --> CB: circuit state
+CB -> CB: process_payment()
+CB --> QTM: payment successful
+QTM --> Flask: payment processed
 
-Flask -> Cart: get_cart_items(user_id)
-Cart -> DB: Query cart Sale and SaleItems
-DB --> Cart: Return cart data
-Cart -> Product: Calculate current pricing
-note right: get_discounted_unit_price(), get_shipping_fees(), get_import_duty()
-Product --> Cart: Return calculated values
-Cart --> Flask: Return complete cart data
-Flask --> Browser: JSON response with updated cart
-Browser --> Customer: Display updated cart
+note over Flask: Transaction Processing
+Flask -> DB: UPDATE Product SET stock = stock - quantity
+DB --> Flask: stock updated
+Flask -> DB: INSERT INTO Sale
+DB --> Flask: sale created
+Flask -> DB: INSERT INTO Payment
+DB --> Flask: payment recorded
 
-== Proceed to Checkout ==
-Customer -> Browser: Click "Complete Purchase"
-Browser -> Flask: POST /checkout
-note right: {payment_method: "Card", card_number: "1234567890123456", card_exp_date: "12/2025"}
-
-Flask -> Cart: get_cart_items(user_id)
-Cart -> DB: Query cart data
-DB --> Cart: Return cart data
-Cart --> Flask: Return cart data
-
-alt Cart is empty
-    Flask --> Browser: Error message "Cart is empty"
-    Browser --> Customer: Display error
-else Cart has items
-    Flask -> DB: Query Products with FOR UPDATE lock
-    DB --> Flask: Return locked Products
-    
-    loop For each cart item
-        Flask -> Product: Check stock vs quantity
-        Product --> Flask: Stock sufficient
-    end
-    
-    Flask -> Sale: Convert cart Sale to pending Sale
-    Sale -> DB: Update Sale status to 'pending'
-    DB --> Sale: Success
-    
-    alt Payment method is Cash
-        Flask -> Payment: Create Cash payment
-        Payment -> DB: Insert Cash record
-        DB --> Payment: Success
-    else Payment method is Card
-        Flask -> Payment: Validate card details
-        Payment --> Flask: Card valid
-        Flask -> Payment: Create Card payment
-        Payment -> DB: Insert Card record
-        DB --> Payment: Success
-    end
-    
-    Flask -> Payment: authorized()
-    Payment --> Flask: (true, "Approved")
-    
-    note over Flask: Simulate 50% random failure rate
-    alt Random failure simulation
-        Payment --> Flask: (false, "Payment declined by processor")
-    else Payment succeeds
-        Payment --> Flask: (true, "Approved")
-        
-        == Final Stock Check & Transaction Completion ==
-        loop For each cart item
-            Flask -> Product: Final stock check
-            Product --> Flask: Stock still available
-        end
-        
-        Flask -> Sale: Update status to 'completed'
-        Sale -> DB: Update Sale record
-        DB --> Sale: Success
-        
-        Flask -> Payment: Update status to 'completed'
-        Payment -> DB: Update Payment record
-        DB --> Payment: Success
-        
-        loop For each cart item
-            Flask -> Product: Reduce stock
-            Product -> DB: Update Product stock
-            DB --> Product: Success
-            
-            Flask -> SaleItem: Create final SaleItem
-            note right: Store final prices, discounts, fees
-            SaleItem -> DB: Insert SaleItem record
-            DB --> SaleItem: Success
-        end
-        
-        Flask -> DB: Commit transaction
-        DB --> Flask: Transaction committed
-        
-        Flask -> DB: Query completed Sale with items
-        DB --> Flask: Return Sale with SaleItems
-        
-        Flask --> Browser: Render receipt.html
-        Browser --> Customer: Display receipt
-    end
-end
+Flask --> Browser: JSON {success: true, sale_id: 123}
+Browser --> Customer: Display success message
 
 @enduml

@@ -1,117 +1,341 @@
-@startuml
+@startuml Use Case Diagram - Retail Management System
+
 !theme plain
 skinparam usecaseStyle rectangle
 skinparam actorStyle awesome
-skinparam packageStyle rectangle
-skinparam noteBackgroundColor #F0F8FF
-skinparam noteBorderColor #4682B4
-skinparam usecaseBackgroundColor #E8F4FD
-skinparam usecaseBorderColor #4682B4
-skinparam actorBackgroundColor #FFE6CC
-skinparam actorBorderColor #FF8C00
 
-title Retail Management System - Use Case Diagram
+' Optimized for 4096px limit
+skinparam dpi 72
+skinparam scale 0.3
+skinparam usecaseFontSize 7
+skinparam usecaseFontStyle normal
+skinparam usecaseBackgroundColor #E3F2FD
+skinparam usecaseBorderColor #1976D2
+skinparam usecaseBorderThickness 1
+skinparam actorFontSize 8
+skinparam actorFontStyle normal
+skinparam actorBackgroundColor #FFEBEE
+skinparam actorBorderColor #D32F2F
+skinparam actorBorderThickness 1
+skinparam packageBackgroundColor #F3E5F5
+skinparam packageBorderColor #7B1FA2
+skinparam packageBorderThickness 1
+skinparam noteBackgroundColor #FFF3CD
+skinparam noteBorderColor #856404
+skinparam noteBorderThickness 1
+skinparam arrowColor #333333
+skinparam arrowThickness 1
 
-' Define actors
-actor "End User" as User
+left to right direction
+
+actor "Customer" as Customer
+actor "Cashier" as Cashier
+actor "Manager" as Manager
+actor "System Admin" as Admin
+actor "Partner/VAR" as Partner
 actor "Payment Service" as PaymentService
-actor "Database System" as Database
 
-' Define the system boundary
-rectangle "Retail Management System" {
-    
-    ' User Management Use Cases
-    package "User Management" {
-        usecase "Register Account" as UC1
-        usecase "Login to System" as UC2
-        usecase "Logout from System" as UC3
-    }
-    
-    ' Product Management Use Cases
-    package "Product Management" {
-        usecase "Browse Products" as UC4
-        usecase "View Product Details" as UC5
-    }
-    
-    ' Shopping Cart Use Cases
-    package "Shopping Cart Management" {
-        usecase "Add Item to Cart" as UC6
-        usecase "Update Cart Quantity" as UC7
-        usecase "Remove Item from Cart" as UC8
-        usecase "View Shopping Cart" as UC9
-        usecase "Clear Shopping Cart" as UC10
-    }
-    
-    ' Sales and Payment Use Cases
-    package "Sales and Payment" {
-        usecase "Register Sale" as UC11
-        usecase "Process Cash Payment" as UC12
-        usecase "Process Card Payment" as UC13
-        usecase "Validate Payment" as UC14
-        usecase "Generate Receipt" as UC15
-        usecase "Handle Payment Failure" as UC16
-    }
-    
-    ' Order Management Use Cases
-    package "Order Management" {
-        usecase "View Purchase History" as UC17
-        usecase "Cancel Sale" as UC18
-    }
-    
-    ' System Management Use Cases
-    package "System Management" {
-        usecase "Manage Inventory" as UC19
-        usecase "Calculate Pricing" as UC20
-        usecase "Log Failed Payments" as UC21
-    }
+package "Core Retail Operations" {
+    usecase "Register Sale" as UC1
+    usecase "Process Cash Payment" as UC2
+    usecase "Process Card Payment" as UC3
+    usecase "Manage Shopping Cart" as UC4
+    usecase "View Product Catalog" as UC5
+    usecase "Calculate Pricing" as UC6
+    usecase "Generate Receipt" as UC7
+    usecase "User Registration" as UC8
+    usecase "User Login" as UC9
+    usecase "User Logout" as UC10
 }
 
-' Actor relationships
-User --> UC1 : "Creates account"
-User --> UC2 : "Authenticates"
-User --> UC3 : "Ends session"
-User --> UC4 : "Views catalog"
-User --> UC5 : "Examines products"
-User --> UC6 : "Adds items"
-User --> UC7 : "Modifies quantities"
-User --> UC8 : "Removes items"
-User --> UC9 : "Reviews cart"
-User --> UC10 : "Empties cart"
-User --> UC11 : "Initiates purchase"
-User --> UC12 : "Pays with cash"
-User --> UC13 : "Pays with card"
-User --> UC15 : "Receives confirmation"
-User --> UC17 : "Checks history"
-User --> UC18 : "Cancels transaction"
+package "Flash Sale Operations" {
+    usecase "Create Flash Sale" as UC11
+    usecase "Reserve Flash Sale Item" as UC12
+    usecase "Process Flash Sale Order" as UC13
+    usecase "Monitor Flash Sale Performance" as UC14
+}
 
-' Supporting actor relationships
-PaymentService --> UC14 : "Validates payment"
-PaymentService --> UC16 : "Reports failure"
-Database --> UC19 : "Stores inventory"
-Database --> UC21 : "Records failures"
+package "Partner Integration" {
+    usecase "Authenticate Partner API" as UC15
+    usecase "Ingest Partner Catalog" as UC16
+    usecase "Sync Partner Products" as UC17
+    usecase "Validate Partner Data" as UC18
+}
 
-' Use case relationships
-UC6 ..> UC9 : "includes"
-UC7 ..> UC9 : "includes"
-UC8 ..> UC9 : "includes"
-UC11 ..> UC9 : "includes"
-UC11 ..> UC14 : "includes"
-UC12 ..> UC14 : "includes"
-UC13 ..> UC14 : "includes"
-UC14 ..> UC15 : "extends"
-UC14 ..> UC16 : "extends"
-UC16 ..> UC21 : "includes"
-UC11 ..> UC20 : "includes"
-UC6 ..> UC20 : "includes"
-UC7 ..> UC20 : "includes"
+package "Quality Tactics & Monitoring" {
+    usecase "Circuit Breaker Protection" as UC19
+    usecase "Graceful Degradation" as UC20
+    usecase "Transaction Rollback" as UC21
+    usecase "Retry Failed Operations" as UC22
+    usecase "Rate Limiting" as UC23
+    usecase "Order Queuing" as UC24
+    usecase "Concurrency Control" as UC25
+    usecase "Feature Toggle Management" as UC26
+    usecase "Data Format Adaptation" as UC27
+    usecase "Message Publishing" as UC28
+    usecase "Test Recording & Playback" as UC29
+    usecase "Error Recovery" as UC30
+    usecase "Progress Tracking" as UC31
+    usecase "Audit Logging" as UC32
+    usecase "Performance Monitoring" as UC33
+}
 
-' Notes for key use cases
-note right of UC11 : "Primary Use Case:\nRegister Sale/Purchase\nTrigger: User chooses\n'Complete Purchase'"
-note right of UC14 : "Payment validation\nincludes card number\nand expiry checks"
-note right of UC16 : "Handles payment\ndeclines and failures\nwith logging"
-note right of UC20 : "Calculates discounts,\nshipping fees, and\nimport duties"
+package "System Administration" {
+    usecase "Manage Users" as UC34
+    usecase "Manage Products" as UC35
+    usecase "View System Metrics" as UC36
+    usecase "Configure Quality Tactics" as UC37
+    usecase "Monitor System Health" as UC38
+}
 
-' System boundary notes
-note bottom of "Retail Management System" : "Web-based retail system\nwith database persistence\nand payment processing"
+' Customer relationships
+Customer --> UC1 : performs
+Customer --> UC2 : initiates
+Customer --> UC3 : initiates
+Customer --> UC4 : manages
+Customer --> UC5 : views
+Customer --> UC6 : triggers
+Customer --> UC7 : requests
+Customer --> UC8 : performs
+Customer --> UC9 : performs
+Customer --> UC10 : performs
+Customer --> UC12 : performs
+Customer --> UC13 : initiates
+Customer --> UC30 : experiences
+Customer --> UC31 : observes
+
+' Cashier relationships
+Cashier --> UC1 : processes
+Cashier --> UC2 : handles
+Cashier --> UC3 : processes
+Cashier --> UC6 : calculates
+Cashier --> UC7 : generates
+Cashier --> UC9 : performs
+Cashier --> UC10 : performs
+
+' Manager relationships
+Manager --> UC11 : creates
+Manager --> UC14 : monitors
+Manager --> UC26 : manages
+Manager --> UC34 : manages
+Manager --> UC35 : manages
+Manager --> UC36 : views
+Manager --> UC37 : configures
+
+' Admin relationships
+Admin --> UC15 : manages
+Admin --> UC16 : configures
+Admin --> UC17 : monitors
+Admin --> UC18 : validates
+Admin --> UC32 : reviews
+Admin --> UC33 : monitors
+Admin --> UC36 : views
+Admin --> UC37 : configures
+Admin --> UC38 : monitors
+
+' Partner relationships
+Partner --> UC15 : authenticates
+Partner --> UC16 : provides data
+Partner --> UC17 : syncs
+Partner --> UC18 : validates
+
+' PaymentService relationships
+PaymentService --> UC3 : processes
+PaymentService --> UC19 : triggers circuit breaker
+PaymentService --> UC22 : retries
+
+' Include relationships
+UC1 ..> UC6 : includes
+UC1 ..> UC21 : includes
+UC1 ..> UC25 : includes
+UC1 ..> UC32 : includes
+
+UC2 ..> UC1 : includes
+UC3 ..> UC1 : includes
+UC3 ..> UC19 : includes
+UC3 ..> UC22 : includes
+UC3 ..> UC30 : includes
+
+UC4 ..> UC5 : includes
+UC4 ..> UC6 : includes
+
+UC6 ..> UC23 : includes
+
+UC7 ..> UC1 : includes
+
+UC11 ..> UC26 : includes
+UC11 ..> UC32 : includes
+
+UC12 ..> UC25 : includes
+UC12 ..> UC32 : includes
+
+UC13 ..> UC1 : includes
+UC13 ..> UC19 : includes
+UC13 ..> UC20 : includes
+UC13 ..> UC23 : includes
+UC13 ..> UC24 : includes
+UC13 ..> UC25 : includes
+UC13 ..> UC30 : includes
+UC13 ..> UC31 : includes
+
+UC15 ..> UC32 : includes
+
+UC16 ..> UC15 : includes
+UC16 ..> UC18 : includes
+UC16 ..> UC27 : includes
+UC16 ..> UC28 : includes
+UC16 ..> UC32 : includes
+
+UC17 ..> UC15 : includes
+UC17 ..> UC27 : includes
+UC17 ..> UC32 : includes
+
+UC18 ..> UC32 : includes
+
+UC19 ..> UC20 : triggers
+UC19 ..> UC24 : triggers
+
+UC20 ..> UC24 : includes
+
+UC22 ..> UC21 : includes
+
+UC24 ..> UC22 : includes
+
+UC25 ..> UC21 : includes
+
+UC26 ..> UC32 : includes
+
+UC27 ..> UC32 : includes
+
+UC28 ..> UC32 : includes
+
+UC29 ..> UC32 : includes
+
+UC30 ..> UC31 : includes
+UC30 ..> UC32 : includes
+
+UC31 ..> UC32 : includes
+
+UC34 ..> UC32 : includes
+UC35 ..> UC32 : includes
+UC36 ..> UC33 : includes
+UC37 ..> UC32 : includes
+UC38 ..> UC33 : includes
+
+' Extend relationships
+UC30 ..> UC3 : extends
+UC30 ..> UC13 : extends
+UC31 ..> UC13 : extends
+UC31 ..> UC16 : extends
+UC31 ..> UC17 : extends
+
+UC19 ..> UC3 : extends
+UC19 ..> UC13 : extends
+
+UC20 ..> UC13 : extends
+
+UC21 ..> UC1 : extends
+UC21 ..> UC13 : extends
+
+UC22 ..> UC3 : extends
+UC22 ..> UC13 : extends
+
+UC23 ..> UC13 : extends
+
+UC24 ..> UC13 : extends
+
+UC25 ..> UC1 : extends
+UC25 ..> UC12 : extends
+UC25 ..> UC13 : extends
+
+UC26 ..> UC11 : extends
+UC26 ..> UC13 : extends
+
+UC27 ..> UC16 : extends
+UC27 ..> UC17 : extends
+
+UC28 ..> UC16 : extends
+
+UC29 ..> UC13 : extends
+
+UC32 ..> UC1 : extends
+UC32 ..> UC3 : extends
+UC32 ..> UC11 : extends
+UC32 ..> UC12 : extends
+UC32 ..> UC13 : extends
+UC32 ..> UC15 : extends
+UC32 ..> UC16 : extends
+UC32 ..> UC17 : extends
+UC32 ..> UC18 : extends
+UC32 ..> UC19 : extends
+UC32 ..> UC20 : extends
+UC32 ..> UC21 : extends
+UC32 ..> UC22 : extends
+UC32 ..> UC23 : extends
+UC32 ..> UC24 : extends
+UC32 ..> UC25 : extends
+UC32 ..> UC26 : extends
+UC32 ..> UC27 : extends
+UC32 ..> UC28 : extends
+UC32 ..> UC29 : extends
+UC32 ..> UC30 : extends
+UC32 ..> UC31 : extends
+UC32 ..> UC33 : extends
+UC32 ..> UC34 : extends
+UC32 ..> UC35 : extends
+UC32 ..> UC36 : extends
+UC32 ..> UC37 : extends
+UC32 ..> UC38 : extends
+
+UC33 ..> UC13 : extends
+UC33 ..> UC19 : extends
+UC33 ..> UC20 : extends
+UC33 ..> UC21 : extends
+UC33 ..> UC22 : extends
+UC33 ..> UC23 : extends
+UC33 ..> UC24 : extends
+UC33 ..> UC25 : extends
+UC33 ..> UC28 : extends
+UC33 ..> UC36 : extends
+UC33 ..> UC38 : extends
+
+note right of UC1
+  Register Sale
+  - Core business operation
+  - Includes pricing calculation
+  - Includes transaction rollback
+  - Includes audit logging
+end note
+
+note right of UC13
+  Process Flash Sale Order
+  - High-performance operation
+  - Includes all quality tactics
+  - Circuit breaker protection
+  - Graceful degradation
+  - Rate limiting
+  - Order queuing
+  - Concurrency control
+  - Error recovery
+  - Progress tracking
+end note
+
+note right of UC16
+  Ingest Partner Catalog
+  - External integration
+  - API authentication
+  - Data validation
+  - Format adaptation
+  - Message publishing
+  - Audit logging
+end note
+
+note right of UC19
+  Circuit Breaker Protection
+  - Availability tactic
+  - Prevents cascading failures
+  - Triggers graceful degradation
+  - Triggers order queuing
+end note
 
 @enduml

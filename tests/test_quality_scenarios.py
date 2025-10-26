@@ -23,7 +23,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from src.tactics.manager import QualityTacticsManager
 from src.models import User, Product, Partner, PartnerAPIKey, FlashSale, Sale
-from src.database import get_db
+from src.main import get_db
 
 
 class QualityScenarioTestSuite:
