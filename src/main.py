@@ -1,14 +1,41 @@
 # src/main.py
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify
-from src.database import get_db, close_db
-from src.models import Product, User, Sale, SaleItem, Payment, Cash, Card, FailedPaymentLog
+from src.database import get_db, close_db, engine
+from src.models import Product, User, Sale, SaleItem, Payment, Cash, Card, FailedPaymentLog, Base
 from werkzeug.security import generate_password_hash, check_password_hash
 import random
 from datetime import datetime, timezone
 from sqlalchemy import not_, desc
 
+# Import quality tactics manager
+from src.tactics.manager import QualityTacticsManager
+
 app = Flask(__name__, template_folder='../templates', static_folder='../static')
 app.config['SECRET_KEY'] = 'a_very_secret_key'
+
+# Initialize database tables
+def init_database():
+    """Initialize database tables"""
+    try:
+        Base.metadata.create_all(bind=engine)
+        print("Database tables initialized successfully")
+    except Exception as e:
+        print(f"Error initializing database: {e}")
+
+# Initialize database on startup
+init_database()
+
+# Initialize quality tactics manager
+def get_quality_manager():
+    """Get quality tactics manager instance"""
+    db = get_db()
+    return QualityTacticsManager(db, {
+        'throttling': {'max_rps': 100, 'window_size': 1},
+        'queue': {'max_size': 1000},
+        'concurrency': {'max_concurrent': 10, 'lock_timeout': 50},
+        'monitoring': {'metrics_interval': 60},
+        'usability': {}
+    })
 
 @app.teardown_appcontext
 def teardown_db(exception):
@@ -353,6 +380,7 @@ def checkout():
         return "User not logged in.", 401
 
     db = get_db()
+    quality_manager = get_quality_manager()
     
     # Get cart from database instead of session
     cart = get_cart_items(session['user_id'], db)
@@ -363,6 +391,20 @@ def checkout():
         recent_sales = db.query(Sale).filter_by(userID=session['user_id']).filter(Sale._status != 'cart').order_by(desc(Sale._sale_date)).limit(5).all()
         msg = "Cannot complete purchase: Your cart is empty. Please add items to your cart first."
         return render_template('index.html', products=products, cart=cart, username=user.username, recent_sales=recent_sales, cart_update_message=msg), 400
+    
+    # Check throttling (Performance tactic)
+    request_data = {
+        'user_id': session['user_id'],
+        'cart_size': len(cart.get('items', [])),
+        'total_amount': cart.get('grand_total', 0)
+    }
+    throttled, throttle_msg = quality_manager.check_throttling(request_data)
+    if not throttled:
+        user = db.query(User).filter_by(userID=session['user_id']).first()
+        products = db.query(Product).all()
+        recent_sales = db.query(Sale).filter_by(userID=session['user_id']).filter(Sale._status != 'cart').order_by(desc(Sale._sale_date)).limit(5).all()
+        msg = f"System is busy. Please try again in a moment. ({throttle_msg})"
+        return render_template('index.html', products=products, cart=cart, username=user.username, recent_sales=recent_sales, cart_update_message=msg), 429
 
     try:
         product_ids = [item['product_id'] for item in cart['items']]
@@ -608,4 +650,164 @@ def cancel_sale():
         return redirect(url_for('index'))
     else:
         return f"Error clearing cart: {message}", 500
+
+# ==============================================
+# CHECKPOINT 2: NEW API ENDPOINTS FOR QUALITY TACTICS
+# ==============================================
+
+@app.route('/api/flash-sales', methods=['GET'])
+def get_flash_sales():
+    """Get active flash sales"""
+    if 'user_id' not in session:
+        return jsonify({'error': 'User not logged in'}), 401
+    
+    db = get_db()
+    quality_manager = get_quality_manager()
+    
+    # Check if flash sale feature is enabled
+    feature_enabled, feature_msg = quality_manager.is_feature_enabled("flash_sale_enabled", session['user_id'])
+    if not feature_enabled:
+        return jsonify({'error': 'Flash sale feature disabled', 'message': feature_msg}), 403
+    
+    try:
+        from src.services.flash_sale_service import FlashSaleService
+        flash_sale_service = FlashSaleService(db)
+        active_sales = flash_sale_service.get_active_flash_sales()
+        
+        sales_data = []
+        for sale in active_sales:
+            sales_data.append({
+                'id': sale.flashSaleID,
+                'product_id': sale.productID,
+                'product_name': sale.product.name,
+                'original_price': float(sale.product.price),
+                'discount_percent': float(sale.discount_percent),
+                'discounted_price': sale.product.get_discounted_unit_price(),
+                'max_quantity': sale.max_quantity,
+                'available_quantity': sale.get_available_quantity(),
+                'end_time': sale.end_time.isoformat()
+            })
+        
+        return jsonify({'flash_sales': sales_data})
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/flash-sales/<int:sale_id>/reserve', methods=['POST'])
+def reserve_flash_sale(sale_id):
+    """Reserve items in a flash sale"""
+    if 'user_id' not in session:
+        return jsonify({'error': 'User not logged in'}), 401
+    
+    db = get_db()
+    quality_manager = get_quality_manager()
+    
+    try:
+        quantity = int(request.json.get('quantity', 1))
+        
+        from src.services.flash_sale_service import FlashSaleService
+        flash_sale_service = FlashSaleService(db)
+        
+        success, message, reservation = flash_sale_service.reserve_flash_sale_item(
+            sale_id, session['user_id'], quantity
+        )
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'message': message,
+                'reservation_id': reservation.reservationID,
+                'expires_at': reservation.expires_at.isoformat()
+            })
+        else:
+            return jsonify({'error': message}), 400
+            
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/partner/ingest', methods=['POST'])
+def partner_catalog_ingest():
+    """Ingest partner catalog data"""
+    api_key = request.headers.get('X-API-Key')
+    if not api_key:
+        return jsonify({'error': 'API key required'}), 401
+    
+    db = get_db()
+    quality_manager = get_quality_manager()
+    
+    try:
+        data = request.get_data(as_text=True)
+        partner_format = request.headers.get('Content-Type', '').split('/')[-1]
+        
+        # Process with all quality tactics
+        success, result = quality_manager.process_partner_catalog_ingest(
+            partner_id=1,  # This would be determined from API key
+            data=data,
+            api_key=api_key
+        )
+        
+        if success:
+            return jsonify(result)
+        else:
+            return jsonify(result), 400
+            
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/system/health', methods=['GET'])
+def system_health():
+    """Get system health status"""
+    try:
+        quality_manager = get_quality_manager()
+        health = quality_manager.get_system_health()
+        return jsonify(health)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/features/<feature_name>/toggle', methods=['POST'])
+def toggle_feature(feature_name):
+    """Toggle feature on/off"""
+    if 'user_id' not in session:
+        return jsonify({'error': 'User not logged in'}), 401
+    
+    db = get_db()
+    quality_manager = get_quality_manager()
+    
+    try:
+        action = request.json.get('action')  # 'enable' or 'disable'
+        rollout_percentage = request.json.get('rollout_percentage', 100)
+        
+        if action == 'enable':
+            success, message = quality_manager.enable_feature(
+                feature_name, rollout_percentage, updated_by=f"user_{session['user_id']}"
+            )
+        elif action == 'disable':
+            success, message = quality_manager.disable_feature(
+                feature_name, updated_by=f"user_{session['user_id']}"
+            )
+        else:
+            return jsonify({'error': 'Invalid action. Use "enable" or "disable"'}), 400
+        
+        if success:
+            return jsonify({'success': True, 'message': message})
+        else:
+            return jsonify({'error': message}), 400
+            
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/progress/<operation_id>', methods=['GET'])
+def get_operation_progress(operation_id):
+    """Get progress for an operation"""
+    try:
+        quality_manager = get_quality_manager()
+        progress = quality_manager.get_progress(operation_id)
+        
+        if progress:
+            return jsonify(progress)
+        else:
+            return jsonify({'error': 'Operation not found'}), 404
+            
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 

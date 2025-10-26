@@ -304,3 +304,331 @@ class FailedPaymentLog(Base):
     def reason(self, value):
         self._reason = value
 
+# ==============================================
+# CHECKPOINT 2: NEW MODELS FOR QUALITY TACTICS
+# ==============================================
+
+# Circuit Breaker Model (Availability tactic)
+class CircuitBreakerState(Base):
+    __tablename__ = 'CircuitBreakerState'
+    breakerID = Column(Integer, primary_key=True, autoincrement=True)
+    service_name = Column(String(100), unique=True, nullable=False)
+    state = Column(String(20), nullable=False, default='closed')  # closed, open, half_open
+    failure_count = Column(Integer, default=0)
+    last_failure_time = Column(DateTime)
+    next_attempt_time = Column(DateTime)
+    failure_threshold = Column(Integer, default=5)
+    timeout_duration = Column(Integer, default=60)  # seconds
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+# Order Queue Model (Availability & Performance tactics)
+class OrderQueue(Base):
+    __tablename__ = 'OrderQueue'
+    queueID = Column(Integer, primary_key=True, autoincrement=True)
+    saleID = Column(Integer, ForeignKey('Sale.saleID'), nullable=False)
+    userID = Column(Integer, ForeignKey('User.userID'), nullable=False)
+    queue_type = Column(String(50), nullable=False)  # payment_retry, flash_sale, processing
+    priority = Column(Integer, default=0)  # higher number = higher priority
+    status = Column(String(20), default='pending')  # pending, processing, completed, failed
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    scheduled_for = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    attempts = Column(Integer, default=0)
+    max_attempts = Column(Integer, default=3)
+    error_message = Column(String)
+    retry_after = Column(DateTime)
+    sale = relationship("Sale")
+    user = relationship("User")
+
+# Feature Toggle Model (Modifiability tactic)
+class FeatureToggle(Base):
+    __tablename__ = 'FeatureToggle'
+    toggleID = Column(Integer, primary_key=True, autoincrement=True)
+    feature_name = Column(String(100), unique=True, nullable=False)
+    is_enabled = Column(Boolean, default=False)
+    description = Column(String)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    updated_by = Column(String(100))
+    rollout_percentage = Column(Integer, default=0)  # 0-100 for gradual rollouts
+    target_users = Column(String)  # JSON array of user IDs or conditions
+
+# Message Queue Model (Integrability tactic - Publish-Subscribe)
+class MessageQueue(Base):
+    __tablename__ = 'MessageQueue'
+    messageID = Column(Integer, primary_key=True, autoincrement=True)
+    topic = Column(String(100), nullable=False)
+    message_type = Column(String(50), nullable=False)
+    payload = Column(String, nullable=False)  # JSON message content
+    status = Column(String(20), default='pending')  # pending, processing, completed, failed
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    scheduled_for = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    attempts = Column(Integer, default=0)
+    max_attempts = Column(Integer, default=3)
+    error_message = Column(String)
+    subscriber_id = Column(String(100))  # which subscriber processed this
+
+# Test Record Model (Testability tactic - Record/Playback)
+class TestRecord(Base):
+    __tablename__ = 'TestRecord'
+    recordID = Column(Integer, primary_key=True, autoincrement=True)
+    test_name = Column(String(100), nullable=False)
+    record_type = Column(String(50), nullable=False)  # request, response, state
+    sequence_number = Column(Integer, nullable=False)
+    timestamp = Column(DateTime, nullable=False)
+    data = Column(String, nullable=False)  # JSON data
+    record_metadata = Column(String)  # JSON metadata (renamed from 'metadata')
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+# Audit Log Model (Security & Monitoring)
+class AuditLog(Base):
+    __tablename__ = 'AuditLog'
+    auditID = Column(Integer, primary_key=True, autoincrement=True)
+    event_type = Column(String(50), nullable=False)
+    entity_type = Column(String(50), nullable=False)
+    entity_id = Column(Integer)
+    user_id = Column(Integer, ForeignKey('User.userID'))
+    action = Column(String(100), nullable=False)
+    old_values = Column(String)  # JSON
+    new_values = Column(String)  # JSON
+    ip_address = Column(String(45))
+    user_agent = Column(String)
+    timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    success = Column(Boolean, default=True)
+    error_message = Column(String)
+    user = relationship("User")
+
+# System Metrics Model (Monitoring)
+class SystemMetrics(Base):
+    __tablename__ = 'SystemMetrics'
+    metricID = Column(Integer, primary_key=True, autoincrement=True)
+    metric_name = Column(String(100), nullable=False)
+    metric_value = Column(Numeric(15, 4), nullable=False)
+    metric_unit = Column(String(20))  # ms, count, percent, etc.
+    tags = Column(String)  # JSON key-value pairs
+    timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    service_name = Column(String(100))
+    instance_id = Column(String(100))
+
+# ==============================================
+# EXISTING MODELS (Updated for Checkpoint 2)
+# ==============================================
+
+# Flash Sale Models
+class FlashSale(Base):
+    __tablename__ = 'FlashSale'
+    flashSaleID = Column(Integer, primary_key=True, autoincrement=True)
+    productID = Column(Integer, ForeignKey('Product.productID'), nullable=False)
+    _start_time = Column('start_time', DateTime, nullable=False)
+    _end_time = Column('end_time', DateTime, nullable=False)
+    _discount_percent = Column('discount_percent', Numeric(5, 2), nullable=False)
+    _max_quantity = Column('max_quantity', Integer, nullable=False)
+    _reserved_quantity = Column('reserved_quantity', Integer, default=0)
+    _status = Column('status', String(20), default='active')  # active, expired, cancelled
+    product = relationship("Product")
+    
+    @property
+    def start_time(self):
+        return self._start_time
+    
+    @start_time.setter
+    def start_time(self, value):
+        self._start_time = value
+    
+    @property
+    def end_time(self):
+        return self._end_time
+    
+    @end_time.setter
+    def end_time(self, value):
+        self._end_time = value
+    
+    @property
+    def discount_percent(self):
+        return self._discount_percent
+    
+    @discount_percent.setter
+    def discount_percent(self, value):
+        self._discount_percent = value
+    
+    @property
+    def max_quantity(self):
+        return self._max_quantity
+    
+    @max_quantity.setter
+    def max_quantity(self, value):
+        self._max_quantity = value
+    
+    @property
+    def reserved_quantity(self):
+        return self._reserved_quantity
+    
+    @reserved_quantity.setter
+    def reserved_quantity(self, value):
+        self._reserved_quantity = value
+    
+    @property
+    def status(self):
+        return self._status
+    
+    @status.setter
+    def status(self, value):
+        self._status = value
+    
+    def is_active(self) -> bool:
+        now = datetime.now(timezone.utc)
+        return (self._status == 'active' and 
+                self._start_time <= now <= self._end_time and
+                self._reserved_quantity < self._max_quantity)
+    
+    def get_available_quantity(self) -> int:
+        return max(0, self._max_quantity - self._reserved_quantity)
+
+class FlashSaleReservation(Base):
+    __tablename__ = 'FlashSaleReservation'
+    reservationID = Column(Integer, primary_key=True, autoincrement=True)
+    flashSaleID = Column(Integer, ForeignKey('FlashSale.flashSaleID'), nullable=False)
+    userID = Column(Integer, ForeignKey('User.userID'), nullable=False)
+    quantity = Column(Integer, nullable=False)
+    _reserved_at = Column('reserved_at', DateTime, default=lambda: datetime.now(timezone.utc))
+    _expires_at = Column('expires_at', DateTime, nullable=False)
+    _status = Column('status', String(20), default='reserved')  # reserved, confirmed, expired, cancelled
+    flash_sale = relationship("FlashSale")
+    user = relationship("User")
+    
+    @property
+    def reserved_at(self):
+        return self._reserved_at
+    
+    @reserved_at.setter
+    def reserved_at(self, value):
+        self._reserved_at = value
+    
+    @property
+    def expires_at(self):
+        return self._expires_at
+    
+    @expires_at.setter
+    def expires_at(self, value):
+        self._expires_at = value
+    
+    @property
+    def status(self):
+        return self._status
+    
+    @status.setter
+    def status(self, value):
+        self._status = value
+    
+    def is_valid(self) -> bool:
+        now = datetime.now(timezone.utc)
+        return (self._status == 'reserved' and 
+                now <= self._expires_at)
+
+# Partner/VAR Catalog Models
+class Partner(Base):
+    __tablename__ = 'Partner'
+    partnerID = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(255), nullable=False)
+    _api_endpoint = Column('api_endpoint', String(500))
+    _api_key = Column('api_key', String(255))
+    _sync_frequency = Column('sync_frequency', Integer, default=3600)  # seconds
+    _last_sync = Column('last_sync', DateTime)
+    _status = Column('status', String(20), default='active')
+    
+    @property
+    def api_endpoint(self):
+        return self._api_endpoint
+    
+    @api_endpoint.setter
+    def api_endpoint(self, value):
+        self._api_endpoint = value
+    
+    @property
+    def api_key(self):
+        return self._api_key
+    
+    @api_key.setter
+    def api_key(self, value):
+        self._api_key = value
+    
+    @property
+    def sync_frequency(self):
+        return self._sync_frequency
+    
+    @sync_frequency.setter
+    def sync_frequency(self, value):
+        self._sync_frequency = value
+    
+    @property
+    def last_sync(self):
+        return self._last_sync
+    
+    @last_sync.setter
+    def last_sync(self, value):
+        self._last_sync = value
+    
+    @property
+    def status(self):
+        return self._status
+    
+    @status.setter
+    def status(self, value):
+        self._status = value
+
+class PartnerAPIKey(Base):
+    __tablename__ = 'PartnerAPIKey'
+    keyID = Column(Integer, primary_key=True, autoincrement=True)
+    partnerID = Column(Integer, ForeignKey('Partner.partnerID'), nullable=False)
+    api_key = Column(String(255), unique=True, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    expires_at = Column(DateTime)
+    is_active = Column(Boolean, default=True)
+    last_used = Column(DateTime)
+    usage_count = Column(Integer, default=0)
+    partner = relationship("Partner")
+
+class PartnerProduct(Base):
+    __tablename__ = 'PartnerProduct'
+    partnerProductID = Column(Integer, primary_key=True, autoincrement=True)
+    partnerID = Column(Integer, ForeignKey('Partner.partnerID'), nullable=False)
+    _external_product_id = Column('external_product_id', String(255), nullable=False)
+    productID = Column(Integer, ForeignKey('Product.productID'))
+    _sync_status = Column('sync_status', String(20), default='pending')
+    _last_synced = Column('last_synced', DateTime)
+    _sync_data = Column('sync_data', String)  # JSON data from partner
+    partner = relationship("Partner")
+    product = relationship("Product")
+    
+    @property
+    def external_product_id(self):
+        return self._external_product_id
+    
+    @external_product_id.setter
+    def external_product_id(self, value):
+        self._external_product_id = value
+    
+    @property
+    def sync_status(self):
+        return self._sync_status
+    
+    @sync_status.setter
+    def sync_status(self, value):
+        self._sync_status = value
+    
+    @property
+    def last_synced(self):
+        return self._last_synced
+    
+    @last_synced.setter
+    def last_synced(self, value):
+        self._last_synced = value
+    
+    @property
+    def sync_data(self):
+        return self._sync_data
+    
+    @sync_data.setter
+    def sync_data(self, value):
+        self._sync_data = value
+

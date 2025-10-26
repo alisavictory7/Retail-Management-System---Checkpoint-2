@@ -18,3 +18,25 @@ pytest==8.0.0
 # For making HTTP requests in tests
 requests==2.31.0
 
+# Additional dependencies for Checkpoint 2 tactics
+# For circuit breaker and retry patterns
+tenacity==8.2.3
+
+# For message queuing and pub/sub
+redis==5.0.1
+
+# For input validation and sanitization
+bleach==6.1.0
+
+# For metrics and monitoring
+prometheus-client==0.19.0
+
+# For dependency injection
+dependency-injector==4.41.0
+
+# For JSON handling and data validation
+jsonschema==4.20.0
+
+# For async operations
+asyncio-mqtt==0.16.1
+
